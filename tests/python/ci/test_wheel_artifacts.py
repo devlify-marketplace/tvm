@@ -258,30 +258,52 @@ def test_build_bootstrap_precedes_offline_build(tmp_path, monkeypatch, bootstrap
     monkeypatch.setattr(ci, "docker", lambda **kwargs: calls.append(kwargs))
     command, _, _ = ci.generate_command("cpu", {}, "wheel build")
     command()
-    commands = [script for script in calls[0]["scripts"] if script.startswith("uv ")]
+    commands = [
+        script
+        for script in calls[0]["scripts"]
+        if "uv pip install" in script or "uv build" in script
+    ]
     bootstrap, build = commands
     arguments = shlex.split(bootstrap)
     # The declared build requirements are a flat string list; keep this test usable on Python 3.10.
     requires = re.search(r"(?ms)^requires = (\[.*?\])", (ROOT / "pyproject.toml").read_text())
     expected = ast.literal_eval(requires[1])
     assert arguments[:5] == ["uv", "pip", "install", "--python", "python3"]
-    assert arguments[5:] == expected
+    assert arguments[5] == "--target"
+    assert arguments[7:] == expected
     assert "--no-build-isolation --offline --python python3" in build
+    assert build.startswith(f'PYTHONPATH="$PWD/{arguments[6]}${{PYTHONPATH:+:$PYTHONPATH}}" ')
     binary = tmp_path / "uv"
     binary.write_text(
         f"#!{sys.executable}\n"
-        "import json, pathlib, sys\n"
+        "import json, os, pathlib, sys\n"
         "with pathlib.Path('calls').open('a') as out: out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "with pathlib.Path('paths').open('a') as out: out.write(os.environ['PYTHONPATH'] + '\\n')\n"
         f"sys.exit(17 if {bootstrap_fails!r} and sys.argv[1] == 'pip' else 0)\n"
     )
     binary.chmod(0o755)
     result = subprocess.run(
-        [shutil.which("bash"), "-ec", "\n".join(commands)],
+        [
+            shutil.which("bash"),
+            "-ec",
+            "\n".join([*commands, 'printf "%s" "$PYTHONPATH" > after-path']),
+        ],
         cwd=tmp_path,
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "PYTHONPATH": "image-marker",
+        },
         capture_output=True,
         text=True,
     )
     assert result.returncode == (17 if bootstrap_fails else 0)
     recorded = [json.loads(line) for line in (tmp_path / "calls").read_text().splitlines()]
     assert [call[0] for call in recorded] == (["pip"] if bootstrap_fails else ["pip", "build"])
+    paths = (tmp_path / "paths").read_text().splitlines()
+    assert paths[0] == "image-marker"
+    if not bootstrap_fails:
+        assert paths[1] == f"{tmp_path}/{arguments[6]}:image-marker"
+        assert (tmp_path / "after-path").read_text() == "image-marker"
+    else:
+        assert not (tmp_path / "after-path").exists()

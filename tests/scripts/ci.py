@@ -402,8 +402,9 @@ def generate_command(
         else:
             scripts = [
                 f"./tests/scripts/task_config_build_{name}.sh {build_dir}",
-                f"rm -rf {build_dir}/wheels",
-                'uv pip install --python python3 "scikit-build-core>=0.11" "setuptools-scm>=8" "mlc-z3-static>=4.16.0"',
+                f"rm -rf {build_dir}/wheels {build_dir}/wheel-build-deps",
+                f'uv pip install --python python3 --target {build_dir}/wheel-build-deps "scikit-build-core>=0.11" "setuptools-scm>=8" "mlc-z3-static>=4.16.0"',
+                f'PYTHONPATH="$PWD/{build_dir}/wheel-build-deps${{PYTHONPATH:+:$PYTHONPATH}}" '
                 f"uv build --wheel --no-build-isolation --offline --python python3 --out-dir {build_dir}/wheels . "
                 f"-Cbuild-dir={build_dir} -Ccmake.build-type=RelWithDebInfo "
                 f"-Cbuild.verbose={'true' if verbose else 'false'}"

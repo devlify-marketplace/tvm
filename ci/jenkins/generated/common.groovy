@@ -315,11 +315,12 @@ def build_docker() {
 }
 
 def wheel_build(image, cpp_tests = false) {
-  // Bootstrap only the declared build requirements in the selected interpreter.
+  // Overlay build requirements without modifying the image Python environment.
   // The build itself stays offline; runtime dependencies belong to the image.
   def commands = build_environment() + '''
-    rm -rf build/wheels
-    uv pip install --python python3 "scikit-build-core>=0.11" "setuptools-scm>=8" "mlc-z3-static>=4.16.0"
+    rm -rf build/wheels build/wheel-build-deps
+    uv pip install --python python3 --target build/wheel-build-deps "scikit-build-core>=0.11" "setuptools-scm>=8" "mlc-z3-static>=4.16.0"
+    PYTHONPATH="$PWD/build/wheel-build-deps${PYTHONPATH:+:$PYTHONPATH}" \
     uv build --wheel --no-build-isolation --offline --python python3 --out-dir build/wheels . \
       -Cbuild-dir=build -Ccmake.build-type=RelWithDebInfo -Cbuild.verbose="${VERBOSE:-true}"
   '''.stripIndent().trim()

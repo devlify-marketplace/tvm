@@ -106,8 +106,12 @@ the separate runtime-only compile check and Emscripten runtime build remain.
 
 Immediately before building, the same container and Python install the declared
 `pyproject.toml` build requirements (scikit-build-core, setuptools-scm and
-mlc-z3-static) without requesting upgrades to already-satisfying versions. A
-failed bootstrap stops the build. `uv build` then runs offline without isolation.
+mlc-z3-static) and their build dependencies. A
+failed bootstrap stops the build. Build requirements install into a writable local
+directory, which is added to `PYTHONPATH` only for the build command. Both commands
+select the original image Python, preserving its existing dependencies without
+modifying the image environment or exposing the build overlay to test consumers.
+`uv build` then runs offline without isolation.
 
 The selected images must already provide compatible runtime and test dependencies,
 including apache-tvm-ffi. Consumer wheel installation remains `--no-deps --offline`;
