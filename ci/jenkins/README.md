@@ -114,9 +114,11 @@ modifying the image environment or exposing the build overlay to test consumers.
 `uv build` then runs offline without isolation.
 
 The selected images must already provide compatible runtime and test dependencies,
-apart from apache-tvm-ffi. Consumers install the checkout's pinned FFI source into
+apart from core FFI and its ORCJIT addon. Consumers install the checkout's pinned FFI source into
 the writable test environment with `--no-deps`, using its declared isolated build
-requirements. They then install the transferred TVM wheel with `--no-deps --offline`.
+requirements, plus the explicit `apache-tvm-ffi-orcjit==0.1.2 --no-deps` prerequisite
+used by legacy Python tests. They then install the transferred TVM wheel with
+`--no-deps --offline`.
 The checkout remains available for tests and resources through `TVM_HOME`, including
 Wasm assets under `web/dist`, without adding its Python package ahead of the wheel. Provenance checks verify both TVM/native libraries and
 source-built FFI load from the test environment; other missing runtime dependencies

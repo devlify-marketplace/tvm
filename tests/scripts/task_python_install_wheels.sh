@@ -38,6 +38,8 @@ export PATH="$VIRTUAL_ENV/bin:$PATH"
 # FFI declares its own isolated build requirements; do not reuse TVM's build overlay.
 export TVM_FFI_SOURCE="$TVM_HOME/3rdparty/tvm-ffi"
 uv pip install --python "$VIRTUAL_ENV/bin/python3" --no-deps --reinstall "$TVM_FFI_SOURCE"
+# Match the explicit prerequisite in the legacy Python test setup.
+uv pip install --python "$VIRTUAL_ENV/bin/python3" --no-deps apache-tvm-ffi-orcjit==0.1.2
 uv pip install --python "$VIRTUAL_ENV/bin/python3" --no-deps --offline --reinstall \
     "$TVM_WHEEL_DIR"/apache_tvm-*.whl
 
@@ -51,7 +53,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 from packaging.requirements import Requirement
 
-# FFI comes from pinned source; other runtime dependencies remain image-owned.
+# Core FFI comes from pinned source and ORCJIT is pinned explicitly.
 # Check the wheel requirements without invoking a resolver or hardcoding a floor.
 for text in requires("apache-tvm") or []:
     requirement = Requirement(text)
