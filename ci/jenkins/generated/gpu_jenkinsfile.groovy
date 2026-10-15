@@ -60,7 +60,7 @@
 // 'python3 jenkins/generate.py'
 // Note: This timestamp is here to ensure that updates to the Jenkinsfile are
 // always rebased on main before merging:
-// Generated at 2026-07-05T12:52:04.884879
+// Generated at 2026-10-15T01:14:20.078323
 
 import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
 // These are set at runtime from data in ci/jenkins/docker-images.yml, update
@@ -419,6 +419,7 @@ def make_cpp_tests(image, build_dir) {
         --sccache-bucket tvm-sccache-prod \
         --sccache-region us-west-2 \
         --cmake-target cpptest \
+        --cmake-target tirx_cpptest \
         --build-dir ${build_dir}
       """,
     label: 'Make C++ tests',
