@@ -20,7 +20,9 @@ import argparse
 import logging
 import multiprocessing
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,19 +38,34 @@ if __name__ == "__main__":
     parser.add_argument("--sccache-bucket", required=False, help="sccache bucket name")
     parser.add_argument("--sccache-region", required=False, help="sccache region")
     parser.add_argument("--build-dir", default="build", help="build folder")
-    parser.add_argument("--cmake-target", help="optional build target")
+    parser.add_argument(
+        "--cmake-target", action="append", default=[], help="build target (repeatable)"
+    )
+    parser.add_argument(
+        "--ffi-only", action="store_true", help="prepare the source-pinned FFI package"
+    )
     parser.add_argument("--debug", required=False, action="store_true", help="build in debug mode")
     args = parser.parse_args()
     sccache_exe = shutil.which("sccache")
 
-    if args.cmake_target in ["standalone_crt", "crttest"]:
+    if args.cmake_target and all(
+        target in {"standalone_crt", "crttest"} for target in args.cmake_target
+    ):
         logging.info("Skipping standalone_crt build")
         exit(0)
 
     use_sccache = sccache_exe is not None
     build_dir = Path(os.getcwd()) / args.build_dir
     build_dir = build_dir.relative_to(REPO_ROOT)
-    env = {}
+    env = {
+        "PYTHONPATH": os.pathsep.join(
+            [
+                str(REPO_ROOT / "tirx" / "python"),
+                str(REPO_ROOT / "python"),
+                os.environ.get("PYTHONPATH", ""),
+            ]
+        )
+    }
 
     if use_sccache:
         if args.sccache_bucket and "AWS_ACCESS_KEY_ID" in os.environ:
@@ -72,6 +89,22 @@ if __name__ == "__main__":
 
     sh = Sh(env)
 
+    # Build from this checkout's pinned submodule once, then transfer the exact
+    # Python/native package together with the TVM libraries to test workers.
+    ffi_commit = subprocess.check_output(
+        ["git", "-C", str(REPO_ROOT / "3rdparty" / "tvm-ffi"), "rev-parse", "HEAD"], text=True
+    ).strip()
+    ffi_identity = f"{ffi_commit} {sys.implementation.cache_tag}"
+    ffi_marker = REPO_ROOT / "python" / "tvm_ffi" / ".source-commit"
+    if not ffi_marker.is_file() or ffi_marker.read_text().strip() != ffi_identity:
+        sh.run(
+            f"uv pip install --python {shlex.quote(sys.executable)} "
+            "-v --no-deps --reinstall --target=python ./3rdparty/tvm-ffi/"
+        )
+        ffi_marker.write_text(ffi_identity + "\n")
+    if args.ffi_only:
+        sys.exit(0)
+
     if use_sccache:
         sh.run("sccache --start-server", check=False)
         logging.info("===== sccache stats =====")
@@ -90,12 +123,8 @@ if __name__ == "__main__":
     else:
         sh.run("cmake -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo ..", cwd=build_dir)
 
-    target = ""
-    if args.cmake_target:
-        target = args.cmake_target
-
     verbose = os.environ.get("VERBOSE", "true").lower() in {"1", "true", "yes"}
-    ninja_args = [target, f"-j{num_cpus}"]
+    ninja_args = [*args.cmake_target, f"-j{num_cpus}"]
     if verbose:
         ninja_args.append("-v")
 
