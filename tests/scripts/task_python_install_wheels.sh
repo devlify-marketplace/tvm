@@ -20,6 +20,8 @@
 # Docker defaults PYTHONPATH to the checkout; never let it shadow the artifacts.
 unset PYTHONPATH TVM_LIBRARY_PATH TVM_FFI_LIBRARY_PATH
 export PYTHONNOUSERSITE=1
+# Installed TVM still needs checkout resources such as web/dist for Wasm linking.
+export TVM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TVM_WHEEL_DIR="$(realpath "${TVM_WHEEL_DIR:-$(pwd)/build/wheels}")"
 # Preserve the image's active environment (often itself a venv), including when
 # local ci.py sources this setup again for a named test suite.
@@ -32,19 +34,25 @@ uv venv --offline --python "$TVM_IMAGE_PYTHON" --clear "$VIRTUAL_ENV"
 TVM_WHEEL_SITE="$("$VIRTUAL_ENV/bin/python3" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
 printf '%s\n' "$TVM_IMAGE_SITE_PACKAGES" > "$TVM_WHEEL_SITE/image-dependencies.pth"
 export PATH="$VIRTUAL_ENV/bin:$PATH"
+# Keep the checkout available to tests and build its pinned FFI into this environment.
+# FFI declares its own isolated build requirements; do not reuse TVM's build overlay.
+export TVM_FFI_SOURCE="$TVM_HOME/3rdparty/tvm-ffi"
+uv pip install --python "$VIRTUAL_ENV/bin/python3" --no-deps --reinstall "$TVM_FFI_SOURCE"
 uv pip install --python "$VIRTUAL_ENV/bin/python3" --no-deps --offline --reinstall \
     "$TVM_WHEEL_DIR"/apache_tvm-*.whl
 
 # Fail before pytest if a source/editable install or native override leaked in.
 python3 - <<'PYTHON'
+import json
 import os
 import sys
-from importlib.metadata import requires, version
+from importlib.metadata import distribution, requires, version
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 from packaging.requirements import Requirement
 
-# --no-deps leaves dependency ownership with the image. Check the wheel's own
-# requirements without invoking a resolver or accepting a stale hardcoded floor.
+# FFI comes from pinned source; other runtime dependencies remain image-owned.
+# Check the wheel requirements without invoking a resolver or hardcoding a floor.
 for text in requires("apache-tvm") or []:
     requirement = Requirement(text)
     if requirement.marker and not requirement.marker.evaluate({"extra": ""}):
@@ -59,11 +67,13 @@ prefix = Path(sys.prefix).resolve()
 path = Path(tvm.__file__).resolve()
 assert path.is_relative_to(prefix), path
 print(f"Installed tvm: {path}")
-# FFI is supplied by the image, not rebuilt or transferred with TVM.
-image_sites = [Path(p).resolve() for p in os.environ["TVM_IMAGE_SITE_PACKAGES"].splitlines()]
+# Verify FFI was installed from this checkout and loads entirely from this environment.
+source = json.loads(distribution("apache-tvm-ffi").read_text("direct_url.json"))
+assert Path(unquote(urlparse(source["url"]).path)).resolve() == Path(os.environ["TVM_FFI_SOURCE"]).resolve()
+assert not source.get("dir_info", {}).get("editable", False), source
 for path in (Path(tvm_ffi.__file__).resolve(), Path(tvm_ffi.LIB._name).resolve()):
-    assert any(path.is_relative_to(site) for site in image_sites), path
-    print(f"Image FFI: {path}")
+    assert path.is_relative_to(prefix), path
+    print(f"Source-built FFI: {path}")
 assert {"tvm_runtime", "tvm_compiler"} <= tvm.base._LOADED_LIBS.keys()
 for name, library in tvm.base._LOADED_LIBS.items():
     path = Path(library._name).resolve()

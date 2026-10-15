@@ -101,7 +101,7 @@ resolve runtime dependencies. CPU, ARM and Wasm host builds request `all;cpptest
 and run C++ tests in that same native tree before uploading anything. Python
 consumers install the exact TVM wheel with `--no-deps --offline`, clear checkout
 path overrides, and verify the package and native-library paths. FFI comes from
-the image. GPU Java tests also receive their existing native runtime libraries;
+the checked-out submodule. GPU Java tests also receive their existing native runtime libraries;
 the separate runtime-only compile check and Emscripten runtime build remain.
 
 Immediately before building, the same container and Python install the declared
@@ -114,8 +114,13 @@ modifying the image environment or exposing the build overlay to test consumers.
 `uv build` then runs offline without isolation.
 
 The selected images must already provide compatible runtime and test dependencies,
-including apache-tvm-ffi. Consumer wheel installation remains `--no-deps --offline`;
-missing runtime dependencies are errors rather than permission to fetch replacements.
+apart from apache-tvm-ffi. Consumers install the checkout's pinned FFI source into
+the writable test environment with `--no-deps`, using its declared isolated build
+requirements. They then install the transferred TVM wheel with `--no-deps --offline`.
+The checkout remains available for tests and resources through `TVM_HOME`, including
+Wasm assets under `web/dist`, without adding its Python package ahead of the wheel. Provenance checks verify both TVM/native libraries and
+source-built FFI load from the test environment; other missing runtime dependencies
+remain errors rather than permission to fetch replacements.
 
 `CMAKE_BUILD_PARALLEL_LEVEL` is passed through Docker as an environment variable.
 An explicit value wins; otherwise builds use at least one CPU and divide the
