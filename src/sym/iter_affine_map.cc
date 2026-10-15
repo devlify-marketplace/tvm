@@ -1990,6 +1990,12 @@ ffi::Optional<PrimExpr> IterMapRewriter::SplitFloorDivConst(IterSplitExpr lhs, P
     }
   }
 
+  // A negative divisor can produce negative left padding, which this split
+  // transformation does not account for. Keep the original operation.
+  if (analyzer_->CanProveLess(rhs, 0)) {
+    return std::nullopt;
+  }
+
   // We handle scale!=1 in above code, hence we only consider floordiv(x, rhs) below
   // where x=floormod(floordiv(iter, lower_factor), extent) + base
 
@@ -2108,6 +2114,12 @@ ffi::Optional<PrimExpr> IterMapRewriter::SplitFloorModConst(IterSplitExpr lhs, P
           << " cannot be used to simplify out the scaling factor.";
       return std::nullopt;
     }
+  }
+
+  // A negative divisor can produce negative left padding, which this split
+  // transformation does not account for. Keep the original operation.
+  if (analyzer_->CanProveLess(rhs, 0)) {
+    return std::nullopt;
   }
 
   // We handle scale!=1 in above code, hence we only consider floormod(x, rhs) below

@@ -250,6 +250,29 @@ def test_compound_floormod_two_regression():
     )
 
 
+def test_iter_map_simplify_negative_scale_nondivisible_constant():
+    x = tvm.tirx.Var("x", "int32")
+    dom = var_dom([(x, 64)])
+
+    expressions = [
+        floordiv(63 - x, 2),
+        floormod(63 - x, 2),
+        floordiv(62 - x, 2),
+        floormod(62 - x, 2),
+    ]
+    for expr in expressions:
+        simplified = tvm.sym.iter_map_simplify([expr], dom)[0]
+        for value in range(64):
+            analyzer = tvm.sym.Analyzer()
+            analyzer.bind(x, tvm.tirx.IntImm("int32", value))
+            expected = int(analyzer.simplify(expr))
+            actual = int(analyzer.simplify(simplified))
+            assert actual == expected, (
+                f"{expr} simplified to {simplified} gives {actual} for x={value}, "
+                f"expected {expected}"
+            )
+
+
 def test_nested_floormod_requires_divisible_extents():
     x = tvm.tirx.Var("x", "int32")
     flm = tvm.tirx.floormod
