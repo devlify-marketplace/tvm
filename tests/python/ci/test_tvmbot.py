@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-import tvm
+import tvm, tvm_tirx
 
 from .test_utils import GITHUB_SCRIPT_ROOT, TempGit, run_script
 
@@ -284,4 +284,4 @@ class TestIgnoreJobs(_TvmBotTest):
 
 
 if __name__ == "__main__":
-    tvm.testing.main()
+    tvm_tirx.testing.main()

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-import tvm.testing
+import tvm_tirx.testing, tvm
 
 from .test_utils import JENKINS_SCRIPT_ROOT, TempGit, run_script
 
@@ -423,4 +423,4 @@ def test_should_rebuild_docker(tmpdir_factory, changed_files, name, check, expec
 
 
 if __name__ == "__main__":
-    tvm.testing.main()
+    tvm_tirx.testing.main()
