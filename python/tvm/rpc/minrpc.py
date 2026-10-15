@@ -37,8 +37,9 @@ def find_minrpc_server_libpath(server="posix_popen_server"):
     path : str
         The path to the min server library.
     """
-    curr_dir = os.path.dirname(os.path.realpath(os.path.expanduser(__file__)))
-    source_dir = os.path.abspath(os.path.join(curr_dir, "..", "..", ".."))
+    # Installed wheels use checkout resources without importing checkout Python.
+    source_dir = os.environ.get("TVM_HOME") or os.fspath(libinfo._dev_top_directory())
+    source_dir = os.path.realpath(os.path.expanduser(source_dir))
     minrpc_dir = os.path.join(source_dir, "src", "runtime", "rpc", "minrpc")
     path = os.path.join(minrpc_dir, server, f"{server}.cc")
 
