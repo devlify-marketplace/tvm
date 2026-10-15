@@ -104,13 +104,14 @@ path overrides, and verify the package and native-library paths. FFI comes from
 the image. GPU Java tests also receive their existing native runtime libraries;
 the separate runtime-only compile check and Emscripten runtime build remain.
 
-The selected images must already provide the requirements in `pyproject.toml`
-(including scikit-build-core, setuptools-scm and compatible apache-tvm-ffi), the
-platform runtime dependencies, and the test dependencies. The pinned image must
-be checked before rollout: the current image recipe does not provision all these
-wheel prerequisites. Missing dependencies are errors, not permission for a test
-stage to fetch or build replacements. No image publication or Jenkins deployment
-is performed by this change.
+Immediately before building, the same container and Python install the declared
+`pyproject.toml` build requirements (scikit-build-core, setuptools-scm and
+mlc-z3-static) without requesting upgrades to already-satisfying versions. A
+failed bootstrap stops the build. `uv build` then runs offline without isolation.
+
+The selected images must already provide compatible runtime and test dependencies,
+including apache-tvm-ffi. Consumer wheel installation remains `--no-deps --offline`;
+missing runtime dependencies are errors rather than permission to fetch replacements.
 
 `CMAKE_BUILD_PARALLEL_LEVEL` is passed through Docker as an environment variable.
 An explicit value wins; otherwise builds use at least one CPU and divide the
@@ -123,7 +124,7 @@ Jenkins may select the old trusted-main Jenkinsfile while checking out a newer
 PR revision. Retain `tests/scripts/task_build.py`, the original raw-artifact
 bundles, and the source-mode test interfaces until trusted main has migrated.
 The native pipelines and local wheel commands explicitly pass
-`TVM_TEST_USE_WHEEL=1`; only that mode installs wheel artifacts without fetching
+`TVM_TEST_USE_WHEEL=1`; only that mode installs wheel artifacts without fetching runtime
 dependencies. Calls without the flag retain the old source setup and dependency
 installation behavior. A missing wheel in wheel mode is an error, not a fallback
 to source mode.

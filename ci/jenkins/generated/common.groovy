@@ -315,10 +315,11 @@ def build_docker() {
 }
 
 def wheel_build(image, cpp_tests = false) {
-  // uv build never resolves runtime dependencies. No isolation plus offline uses
-  // only the backend and FFI already provisioned in the image.
+  // Bootstrap only the declared build requirements in the selected interpreter.
+  // The build itself stays offline; runtime dependencies belong to the image.
   def commands = build_environment() + '''
     rm -rf build/wheels
+    uv pip install --python python3 "scikit-build-core>=0.11" "setuptools-scm>=8" "mlc-z3-static>=4.16.0"
     uv build --wheel --no-build-isolation --offline --python python3 --out-dir build/wheels . \
       -Cbuild-dir=build -Ccmake.build-type=RelWithDebInfo -Cbuild.verbose="${VERBOSE:-true}"
   '''.stripIndent().trim()

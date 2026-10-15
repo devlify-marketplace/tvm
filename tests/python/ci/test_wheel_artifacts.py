@@ -16,9 +16,11 @@
 # under the License.
 """Wheel artifact transport and local CI command contracts, without a TVM import."""
 
+import ast
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -245,3 +247,41 @@ def test_wheel_mode_does_not_fall_back_when_install_fails(tmp_path):
     )
     assert result.returncode == 37
     assert "uv pip install" not in result.stderr
+
+
+@pytest.mark.parametrize("bootstrap_fails", [False, True])
+def test_build_bootstrap_precedes_offline_build(tmp_path, monkeypatch, bootstrap_fails):
+    import shlex
+
+    ci = load_local_ci()
+    calls = []
+    monkeypatch.setattr(ci, "docker", lambda **kwargs: calls.append(kwargs))
+    command, _, _ = ci.generate_command("cpu", {}, "wheel build")
+    command()
+    commands = [script for script in calls[0]["scripts"] if script.startswith("uv ")]
+    bootstrap, build = commands
+    arguments = shlex.split(bootstrap)
+    # The declared build requirements are a flat string list; keep this test usable on Python 3.10.
+    requires = re.search(r"(?ms)^requires = (\[.*?\])", (ROOT / "pyproject.toml").read_text())
+    expected = ast.literal_eval(requires[1])
+    assert arguments[:5] == ["uv", "pip", "install", "--python", "python3"]
+    assert arguments[5:] == expected
+    assert "--no-build-isolation --offline --python python3" in build
+    binary = tmp_path / "uv"
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        "import json, pathlib, sys\n"
+        "with pathlib.Path('calls').open('a') as out: out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        f"sys.exit(17 if {bootstrap_fails!r} and sys.argv[1] == 'pip' else 0)\n"
+    )
+    binary.chmod(0o755)
+    result = subprocess.run(
+        [shutil.which("bash"), "-ec", "\n".join(commands)],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == (17 if bootstrap_fails else 0)
+    recorded = [json.loads(line) for line in (tmp_path / "calls").read_text().splitlines()]
+    assert [call[0] for call in recorded] == (["pip"] if bootstrap_fails else ["pip", "build"])
