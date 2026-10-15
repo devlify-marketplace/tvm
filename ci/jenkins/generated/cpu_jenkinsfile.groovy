@@ -30,7 +30,7 @@ ci.build('CPU', 'BUILD: CPU', 'tvm/build-cpu', images.ci_cpu, 'cpu') {
 
 stage('Test') {
   parallel('unittest: CPU': {
-    ci.test('CPU-SMALL', 'unittest: CPU', 'tvm/ut-python-cpu', images.ci_cpu, 'cpu') {
+    ci.test('CPU', 'unittest: CPU', 'tvm/ut-python-cpu', images.ci_cpu, 'cpu') {
       ci.download('cpu')
       ci.python_unittest(images.ci_cpu)
     }
