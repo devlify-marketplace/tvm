@@ -19,13 +19,15 @@
 ci = evaluate(readTrusted('ci/jenkins/generated/common.groovy'))
 ci.start()
 
+docker_run += ' --env TVM_TEST_USE_WHEEL=1'
+
 ci.build('CPU', 'BUILD: CPU', 'tvm/build-cpu', images.ci_cpu, 'cpu') {
   sh(
     script: "${docker_run} ${images.ci_cpu} ./tests/scripts/task_config_build_cpu.sh build",
     label: 'Create CPU CMake config',
   )
   ci.wheel_build(images.ci_cpu, true)
-  ci.upload('cpu', '--bundle wheels')
+  ci.upload('cpu', '--artifacts wheels')
 }
 
 stage('Test') {

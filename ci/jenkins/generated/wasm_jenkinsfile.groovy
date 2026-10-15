@@ -19,6 +19,8 @@
 ci = evaluate(readTrusted('ci/jenkins/generated/common.groovy'))
 ci.start()
 
+docker_run += ' --env TVM_TEST_USE_WHEEL=1'
+
 ci.build('CPU', 'BUILD: WASM', 'tvm/build-wasm', images.ci_wasm, 'wasm') {
   sh(
     script: "${docker_run} ${images.ci_wasm} ./tests/scripts/task_config_build_wasm.sh build",

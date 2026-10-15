@@ -63,7 +63,7 @@ def test_wheel_directory_upload_retries_each_transfer(tmp_path, succeed):
     for relative in [
         "ci/jenkins/scripts/s3.py",
         "ci/jenkins/scripts/retry.sh",
-        "ci/jenkins/data.py",
+        "ci/jenkins/artifacts.py",
     ]:
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)

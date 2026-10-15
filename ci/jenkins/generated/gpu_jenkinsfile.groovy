@@ -19,10 +19,12 @@
 ci = evaluate(readTrusted('ci/jenkins/generated/common.groovy'))
 ci.start()
 
+docker_run += ' --env TVM_TEST_USE_WHEEL=1'
+
 ci.build('CPU', 'BUILD: GPU', 'tvm/build-gpu', images.ci_gpu, 'gpu') {
   sh "${docker_run} --no-gpu ${images.ci_gpu} ./tests/scripts/task_config_build_gpu.sh build"
   ci.wheel_build("--no-gpu ${images.ci_gpu}")
-  ci.upload('gpu', '--bundle wheels --bundle jvm_runtime')
+  ci.upload('gpu', '--artifacts wheels --artifacts jvm_runtime')
 
   // Check the compiler-only GPU configuration after publishing the test build.
   sh 'rm -rf build'
@@ -56,7 +58,7 @@ stage('Test') {
           script: "${docker_run} ${images.ci_gpu} ./tests/scripts/task_python_docs.sh",
           label: 'Build docs',
         )
-        ci.upload('docs', '--items docs.tgz')
+        ci.upload('docs', '--paths docs.tgz')
         sh(
           script: "aws s3 cp --no-progress _docs s3://${s3_bucket}/${s3_prefix}/docs --recursive",
           label: 'Upload docs to S3',
@@ -112,7 +114,7 @@ stage('Deploy') {
       ci.deploy_step('Deploy Docs', env.DOCS_DEPLOY_ENABLED == 'yes', 'tvm/deploy-docs') {
         ci.init_git()
         sh(
-          script: "./${jenkins_scripts_root}/s3.py --action download --bucket ${s3_bucket} --prefix ${s3_prefix}/docs --items docs.tgz",
+          script: "./${jenkins_scripts_root}/s3.py --action download --bucket ${s3_bucket} --prefix ${s3_prefix}/docs --paths docs.tgz",
           label: 'Download docs folder from S3',
         )
         deploy_docs()

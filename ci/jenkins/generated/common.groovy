@@ -24,7 +24,7 @@ built_images = [:]
 upstream_revision = null
 max_time = 180
 rebuild_docker_images = false
-docker_run = 'docker/bash.sh --env CI --env PLATFORM --env TEST_STEP_NAME --env TVM_TEST_USE_WHEEL=1'
+docker_run = 'docker/bash.sh --env CI --env PLATFORM --env TEST_STEP_NAME'
 docker_build = 'docker/build.sh'
 s3_bucket = 'tvm-jenkins-artifacts-prod'
 s3_prefix = "tvm/${env.BRANCH_NAME}/${env.BUILD_NUMBER}"
@@ -34,11 +34,60 @@ properties([parameters(image_platforms.collect { name, platform ->
   string(name: "${name}_param", defaultValue: '')
 })])
 
+// Internal helpers, with dependencies before their callers.
+// Keep these callable for existing pipelines.
+
 def per_exec_ws(folder) {
   return "workspace/exec_${env.EXECUTOR_NUMBER}/" + folder
 }
 
-// initialize source codes
+def update_upstream_revision(git_ref) {
+  if (upstream_revision == null) {
+    upstream_revision = sh(
+      script: "git log -1 ${git_ref} --format=\'%H\'",
+      label: 'Determine upstream revision',
+      returnStdout: true,
+    ).trim()
+  }
+}
+
+def merge_with_target() {
+  def target = env.CHANGE_TARGET
+  sh (
+    script: "git fetch origin ${target}",
+    label: "Fetch target branch ${target}",
+  )
+  update_upstream_revision("FETCH_HEAD")
+  sh (
+    script: "git -c user.name=TVM-Jenkins -c user.email=jenkins@tvm.apache.org merge ${upstream_revision}",
+    label: "Merge to origin/${target}"
+  )
+}
+
+def checkout_trusted_files() {
+  // trust everything from branch builds
+  if (env.BRANCH_NAME == null || !env.BRANCH_NAME.startsWith('PR-')) {
+    return;
+  }
+
+  // Trust contributors listed in the pinned target revision.
+  grep_code = sh(
+    returnStatus: true,
+    script: "git show '${upstream_revision}:CONTRIBUTORS.md' | grep '@${env.CHANGE_AUTHOR}'",
+    label: 'Check if change is from a contributor',
+  )
+
+  if (grep_code == 1) {
+    // Any scripts that run on the bare host and not inside a Docker container
+    // (especially those that access secrets) should be checked out here so
+    // only trusted versions are used in CI
+    sh(
+      script: "git checkout ${upstream_revision} ${jenkins_scripts_root}/. ci/jenkins/artifacts.py",
+      label: 'Check out trusted files',
+    )
+  }
+}
+
 def init_git() {
   retry(5) {
     checkout scm
@@ -71,61 +120,6 @@ def init_git() {
     label: 'Update git submodules',
   )
   checkout_trusted_files()
-}
-
-def update_upstream_revision(git_ref) {
-  if (upstream_revision == null) {
-    upstream_revision = sh(
-      script: "git log -1 ${git_ref} --format=\'%H\'",
-      label: 'Determine upstream revision',
-      returnStdout: true,
-    ).trim()
-  }
-}
-
-def merge_with_target() {
-  def target = env.CHANGE_TARGET
-  sh (
-    script: "git fetch origin ${target}",
-    label: "Fetch target branch ${target}",
-  )
-  update_upstream_revision("FETCH_HEAD")
-  sh (
-    script: "git -c user.name=TVM-Jenkins -c user.email=jenkins@tvm.apache.org merge ${upstream_revision}",
-    label: "Merge to origin/${target}"
-  )
-}
-
-def docker_init(image) {
-  // Clear out all Docker images that aren't going to be used
-  sh(
-    script: """
-    set -eux
-    docker image ls --all
-    IMAGES=\$(docker image ls --all --format '{{.Repository}}:{{.Tag}}  {{.ID}}')
-
-    echo -e "Found images:\\n\$IMAGES"
-    echo "\$IMAGES" | { grep -vE '${image}' || test \$? = 1; } | { xargs docker rmi || test \$? = 123; }
-
-    docker image ls --all
-    """,
-    label: 'Clean old Docker images',
-  )
-
-  if (image.contains("amazonaws.com")) {
-    // If this string is in the image name it's from ECR and needs to be pulled
-    // with the right credentials
-    ecr_pull(image)
-  } else {
-    sh(
-      script: """
-      set -eux
-      . ${jenkins_scripts_root}/retry.sh
-      retry 5 docker pull ${image}
-      """,
-      label: 'Pull docker image',
-    )
-  }
 }
 
 def ecr_pull(full_name) {
@@ -187,30 +181,6 @@ def is_last_build() {
   } catch (Throwable ex) {
     echo 'Error during check is_last_build ' + ex.toString()
     return false
-  }
-}
-
-def checkout_trusted_files() {
-  // trust everything from branch builds
-  if (env.BRANCH_NAME == null || !env.BRANCH_NAME.startsWith('PR-')) {
-    return;
-  }
-
-  // Trust contributors listed in the pinned target revision.
-  grep_code = sh(
-    returnStatus: true,
-    script: "git show '${upstream_revision}:CONTRIBUTORS.md' | grep '@${env.CHANGE_AUTHOR}'",
-    label: 'Check if change is from a contributor',
-  )
-
-  if (grep_code == 1) {
-    // Any scripts that run on the bare host and not inside a Docker container
-    // (especially those that access secrets) should be checked out here so
-    // only trusted versions are used in CI
-    sh(
-      script: "git checkout ${upstream_revision} ${jenkins_scripts_root}/. ci/jenkins/data.py",
-      label: 'Check out trusted files',
-    )
   }
 }
 
@@ -283,11 +253,80 @@ def prepare(node_type) {
     }
   }
 }
-def python_unittest(image) {
-  sh (
-    script: "${docker_run} ${image} ./tests/scripts/task_python_unittest.sh",
-    label: 'Run Python unit tests',
+
+def retry_latest(ex, body) {
+  echo 'Exception during SPOT run ' + ex.toString()
+  if (!is_last_build()) {
+    echo 'Exit since it is not last build'
+    throw ex
+  }
+  echo 'Retry on-demand given it is last build'
+  currentBuild.result = 'SUCCESS'
+  // Do not catch failure of the on-demand retry.
+  body()
+}
+
+def run_on_node(label, name, folder, image, variables, body) {
+  if (skip_ci) {
+    Utils.markStageSkippedForConditional(name)
+    return
+  }
+  echo 'Begin running on node_type ' + label
+  node(label) {
+    ws(per_exec_ws(folder)) {
+      init_git()
+      docker_init(image)
+      timeout(time: max_time, unit: 'MINUTES') {
+        withEnv(variables) { body() }
+      }
+    }
+  }
+  echo 'End running on node_type ' + label
+}
+
+// Public entry points.
+
+def docker_init(image) {
+  // Clear out all Docker images that aren't going to be used
+  sh(
+    script: """
+    set -eux
+    docker image ls --all
+    IMAGES=\$(docker image ls --all --format '{{.Repository}}:{{.Tag}}  {{.ID}}')
+
+    echo -e "Found images:\\n\$IMAGES"
+    echo "\$IMAGES" | { grep -vE '${image}' || test \$? = 1; } | { xargs docker rmi || test \$? = 123; }
+
+    docker image ls --all
+    """,
+    label: 'Clean old Docker images',
   )
+
+  if (image.contains("amazonaws.com")) {
+    // If this string is in the image name it's from ECR and needs to be pulled
+    // with the right credentials
+    ecr_pull(image)
+  } else {
+    sh(
+      script: """
+      set -eux
+      . ${jenkins_scripts_root}/retry.sh
+      retry 5 docker pull ${image}
+      """,
+      label: 'Pull docker image',
+    )
+  }
+}
+
+// Preparation retries Exceptions unconditionally; Errors and cancellation of the
+// previous build are deliberately outside this fallback.
+def start() {
+  cancel_previous_build()
+  try {
+    prepare('CPU-SMALL-SPOT')
+  } catch (Exception ex) {
+    prepare('CPU-SMALL')
+  }
 }
 
 // Share only the compiler/cache environment; build commands stay at their callers.
@@ -332,15 +371,42 @@ def wheel_build(image, cpp_tests = false) {
      label: 'Build TVM wheel' + (cpp_tests ? ' and run C++ tests' : ''))
 }
 
-// Preparation retries Exceptions unconditionally; Errors and cancellation of the
-// previous build are deliberately outside this fallback.
-def start() {
-  cancel_previous_build()
-  try {
-    prepare('CPU-SMALL-SPOT')
-  } catch (Exception ex) {
-    prepare('CPU-SMALL')
-  }
+// Legacy compatibility functions. Keep names, signatures and behavior until
+// existing pipeline callers have migrated after merge.
+
+def python_unittest(image) {
+  sh (
+    script: "${docker_run} ${image} ./tests/scripts/task_python_unittest.sh",
+    label: 'Run Python unit tests',
+  )
+}
+
+def make_cpp_tests(image, build_dir) {
+  sh (
+    script: """
+      set -eux
+      ${docker_run} ${image} python3 ./tests/scripts/task_build.py \
+        --sccache-bucket tvm-sccache-prod \
+        --sccache-region us-west-2 \
+        --cmake-target cpptest \
+        --build-dir ${build_dir}
+      """,
+    label: 'Make C++ tests',
+  )
+}
+
+def cmake_build(image, path) {
+  sh (
+    script: "${docker_run} --env CI_NUM_EXECUTORS ${image} ./tests/scripts/task_build.py --sccache-bucket tvm-sccache-prod --sccache-region us-west-2 --build-dir ${path}",
+    label: 'Run CMake build',
+  )
+}
+
+def cpp_unittest(image) {
+  sh (
+    script: "${docker_run} --env CI_NUM_EXECUTORS ${image} ./tests/scripts/task_cpp_unittest.sh",
+    label: 'Run C++ tests',
+  )
 }
 
 // A failed build command is final. Infrastructure failures retry only while
@@ -360,18 +426,6 @@ def build(label, name, folder, image, platform, body) {
   }
 }
 
-def retry_latest(ex, body) {
-  echo 'Exception during SPOT run ' + ex.toString()
-  if (!is_last_build()) {
-    echo 'Exit since it is not last build'
-    throw ex
-  }
-  echo 'Retry on-demand given it is last build'
-  currentBuild.result = 'SUCCESS'
-  // Do not catch failure of the on-demand retry.
-  body()
-}
-
 def test(label, name, folder, image, platform, body) {
   def variables = ["PLATFORM=${platform}", "TEST_STEP_NAME=${name}"]
   try {
@@ -379,24 +433,6 @@ def test(label, name, folder, image, platform, body) {
   } catch (Throwable ex) {
     retry_latest(ex) { run_on_node(label, name, folder, image, variables, body) }
   }
-}
-
-def run_on_node(label, name, folder, image, variables, body) {
-  if (skip_ci) {
-    Utils.markStageSkippedForConditional(name)
-    return
-  }
-  echo 'Begin running on node_type ' + label
-  node(label) {
-    ws(per_exec_ws(folder)) {
-      init_git()
-      docker_init(image)
-      timeout(time: max_time, unit: 'MINUTES') {
-        withEnv(variables) { body() }
-      }
-    }
-  }
-  echo 'End running on node_type ' + label
 }
 
 def upload(tag, options) {

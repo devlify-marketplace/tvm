@@ -45,7 +45,23 @@ Despite the historical directory name, these are native Groovy sources: edit
 and review them directly. `generated/common.groovy` shares preparation, checkout,
 Docker setup, artifacts and spot fallback policy. Platform commands and deployment
 stay visible in their respective job files. Image tags remain in
-`docker-images.ini`; artifact bundles remain in `data.py`.
+`docker-images.ini`; artifact bundles remain in `artifacts.py`. Bundle entries may
+contain repository-relative globs such as `build/dist/*.whl`. Upload expands
+patterns locally, sorts and deduplicates the paths, and keeps their relative
+paths under the S3 prefix. Unmatched patterns produce a warning; missing literal
+optional artifacts retain their warning-and-skip behavior. Directories keep
+recursive upload behavior. Download still copies the complete prefix without
+expanding local or remote globs.
+Use `s3.py --artifacts NAME...` to select registry entries or `--paths PATH...`
+to select raw paths; the selections are mutually exclusive. Existing Jenkinsfiles
+can keep `--bundle` and `--items`, which are aliases with the same semantics.
+The shared helper's legacy `upload(tag, options)` passes those options unchanged.
+`artifacts.py` exposes the declarative `ARTIFACTS` registry; there is no `data.py`
+compatibility module.
+
+The shared helper groups internal dependencies first, public entry points next,
+and retained legacy functions last. Existing function signatures, shared variables,
+startup and retry behavior remain available to the platform Jenkinsfiles.
 
 Host-side commands live in `scripts/`. GitHub bot and release API helpers live
 in `../github/`. The retained `determine_docker_images.py` supports both
@@ -58,22 +74,25 @@ Each entry point evaluates the shared helper returned by `readTrusted` at
 Jenkins' selected SCM revision. Untrusted PRs that modify or delete the helper
 fail immediately, before node allocation, checkout, or credentials. Missing
 helpers, interrupted reads, and evaluation errors also propagate directly.
-No alternative helper is fetched or evaluated.
+No alternative helper is fetched or evaluated. Trusted named branches retain
+their selected helper revision.
 
-Trusted helper changes use Jenkins' selected revision directly. Cancellation
-runs once before preparation. During preparation, the normal source merge pins
-the PR target revision for subsequent stages, including release targets.
-Host scripts and artifact metadata follow that pinned target revision for PR
-authors outside `CONTRIBUTORS.md`.
+Cancellation runs once before preparation. During preparation, the normal source
+merge pins the PR target revision for subsequent stages, including release
+targets. Host scripts and artifact metadata follow that pinned target revision
+for PR authors outside `CONTRIBUTORS.md`.
 
-The legacy `ci/scripts/` hierarchy and `tests/scripts/task_show_node_info.sh`
-remain alongside the new paths because fork PR jobs can select older trusted
-Jenkinsfiles from their target branch. Those files keep the old docs-only and
-slow-test gates and their helper imports; the native pipelines use the new
-layout without those gates. Both layouts share the artifact registry and image
-configuration. Keep the legacy commands until the trusted targets no longer
-call them. Use a trusted branch build to exercise native helper changes; do not
-bypass a refused read by evaluating PR-owned code or a different revision.
+The pinned target must contain the coordinated `artifacts.py` and `s3.py` update.
+Before that update reaches a target, a Jenkins-trusted PR from an author outside
+its contributor list cannot restore the renamed registry, and that build fails.
+Use a trusted named branch for the transition; do not bypass the trusted-file
+checkout or mix the old target's script with a PR-owned registry.
+
+The obsolete `ci/scripts/` copies and old node-info path have been removed now
+that main's Jenkinsfiles use the canonical layout. The live `task_build.py`,
+source-mode test scripts and artifact interfaces remain available. Older target
+branches must retain their matching legacy commands; they are not supplied by
+this checkout.
 
 Before enabling the migration on production jobs, validate it with the existing
 Jenkins plugin versions and sandbox settings on a trusted branch: run all five
@@ -101,8 +120,9 @@ resolve runtime dependencies. CPU, ARM and Wasm host builds request `all;cpptest
 and run C++ tests in that same native tree before uploading anything. Python
 consumers install the exact TVM wheel with `--no-deps --offline`, clear checkout
 path overrides, and verify the package and native-library paths. FFI comes from
-the checked-out submodule. GPU Java tests also receive their existing native runtime libraries;
-the separate runtime-only compile check and Emscripten runtime build remain.
+the checked-out submodule. GPU Java tests also receive their existing native
+runtime libraries; the separate runtime-only compile check and Emscripten runtime
+build remain.
 
 Immediately before building, the same container and Python install the declared
 `pyproject.toml` build requirements (scikit-build-core, setuptools-scm and
@@ -114,14 +134,16 @@ modifying the image environment or exposing the build overlay to test consumers.
 `uv build` then runs offline without isolation.
 
 The selected images must already provide compatible runtime and test dependencies,
-apart from core FFI and its ORCJIT addon. Consumers install the checkout's pinned FFI source into
-the writable test environment with `--no-deps`, using its declared isolated build
+apart from core FFI and its ORCJIT addon. Consumers install the checkout's pinned
+FFI source into the writable test environment with `--no-deps`, using its declared
+isolated build
 requirements, plus the explicit `apache-tvm-ffi-orcjit==0.1.2 --no-deps` prerequisite
 used by legacy Python tests. They then install the transferred TVM wheel with
 `--no-deps --offline`.
 The checkout remains available for tests and resources through `TVM_HOME`, including
-Wasm assets under `web/dist`, without adding its Python package ahead of the wheel. Provenance checks verify both TVM/native libraries and
-source-built FFI load from the test environment; other missing runtime dependencies
+Wasm assets under `web/dist`, without adding its Python package ahead of the
+wheel. Provenance checks verify both TVM/native libraries and source-built FFI
+load from the test environment; other missing runtime dependencies
 remain errors rather than permission to fetch replacements.
 
 `CMAKE_BUILD_PARALLEL_LEVEL` is passed through Docker as an environment variable.
@@ -129,13 +151,14 @@ An explicit value wins; otherwise builds use at least one CPU and divide the
 node CPU count by `CI_NUM_EXECUTORS`. Both the wheel backend and specialized
 native commands use that bound without an additional parallel flag.
 
-### Old pipeline compatibility
+### Current-main pipeline compatibility
 
 Jenkins may select the old trusted-main Jenkinsfile while checking out a newer
 PR revision. Retain `tests/scripts/task_build.py`, the original raw-artifact
 bundles, and the source-mode test interfaces until trusted main has migrated.
-The native pipelines and local wheel commands explicitly pass
-`TVM_TEST_USE_WHEEL=1`; only that mode installs wheel artifacts without fetching runtime
-dependencies. Calls without the flag retain the old source setup and dependency
-installation behavior. A missing wheel in wheel mode is an error, not a fallback
+The wheel entrypoints opt in after preparation, leaving the shared helper's
+default unchanged for older entrypoints. They and local wheel commands explicitly
+pass `TVM_TEST_USE_WHEEL=1`; that mode installs transferred TVM wheels with the
+explicit FFI setup above. Calls without the flag retain the old source setup and
+dependency installation behavior. A missing wheel in wheel mode is an error, not a fallback
 to source mode.

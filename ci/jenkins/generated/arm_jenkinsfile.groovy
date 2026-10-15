@@ -19,11 +19,13 @@
 ci = evaluate(readTrusted('ci/jenkins/generated/common.groovy'))
 ci.start()
 
+docker_run += ' --env TVM_TEST_USE_WHEEL=1'
+
 ci.build('ARM-GRAVITON3', 'BUILD: arm', 'tvm/build-arm', images.ci_arm, 'arm') {
   sh(
     script: "${docker_run} ${images.ci_arm} ./tests/scripts/task_config_build_arm.sh build",
     label: 'Create ARM CMake config',
   )
   ci.wheel_build(images.ci_arm, true)
-  ci.upload('arm', '--bundle wheels')
+  ci.upload('arm', '--artifacts wheels')
 }
