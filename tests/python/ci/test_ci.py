@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-import tvm_tirx.testing, tvm
+import tvm_tirx.testing
 
 from .test_utils import JENKINS_SCRIPT_ROOT, TempGit, run_script
 

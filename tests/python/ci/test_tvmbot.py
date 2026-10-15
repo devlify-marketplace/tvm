@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-import tvm, tvm_tirx
+import tvm_tirx
 
 from .test_utils import GITHUB_SCRIPT_ROOT, TempGit, run_script
 
